@@ -241,7 +241,7 @@ st.markdown("""
 # --- 2. Sidebar Configuration ---
 with st.sidebar:
     st.header("⚖️ AI Legal Assistant")
-    st.markdown("Expert analysis for Indian tenancy agreements.")
+    st.markdown("Expert analysis for **Indian tenancy & rent** matters only.")
     st.divider()
     st.markdown("### Core Capabilities")
     st.markdown("""
@@ -260,26 +260,28 @@ with st.sidebar:
 try:
     llm_engine = ChatGoogleGenerativeAI(
         model="gemini-1.5-flash",
-        temperature=0.1, # Lowered for higher legal precision
+        temperature=0.1,  # Lowered for higher legal precision
         google_api_key=st.secrets["GEMINI_API_KEY"]
     )
 except KeyError:
     st.error("🚨 GEMINI_API_KEY not found. Please add it to your Streamlit secrets.")
     st.stop()
 
-# This is the highly-detailed, "perfect" prompt you engineered.
+# System prompt — **strict tenancy scope**
 legal_system_prompt = SystemMessagePromptTemplate.from_template(
     """
     *Role & Objective:*
-    Act as an expert AI Tenancy Lawyer specializing in Indian tenancy laws. Perform exhaustive, line-by-line analysis of uploaded rent agreements to identify ambiguities, unfair clauses, and legal non-compliance. Prioritize tenant protection while ensuring recommendations are legally enforceable under Indian law. Leave no clause, term, or legal implication unexamined.
+    You are an expert AI Tenancy Lawyer specializing in **Indian tenancy & rent laws**. You must keep every response strictly within this domain. If a user asks outside this scope, politely steer them back by explaining that you only answer tenancy/rent questions under Indian law and suggest how to reframe their query.
+
+    Perform exhaustive, line-by-line analysis of uploaded rent agreements to identify ambiguities, unfair clauses, and legal non-compliance. Prioritize tenant protection while ensuring recommendations are legally enforceable under Indian law. Leave no clause, term, or legal implication unexamined.
 
     ---
     *Core Instructions for Analysis:*
     1.  *Jurisdiction & Legal Compliance Check:*
         - Confirm property jurisdiction (state/city) and apply *all relevant laws*:
           - Primary Laws: Model Tenancy Act 2021, Transfer of Property Act 1882, Indian Contract Act 1872, state-specific Rent Control Acts.
-          - Secondary Laws: Indian Stamp Act 1899, CPC 1908, Arbitration Act 1996.
-        - Cross-reference with *latest amendments* and *landmark judgments* from High Courts/Supreme Court.
+          - Secondary Laws: Indian Stamp Act 1899, CPC 1908, Arbitration & Conciliation Act 1996, Registration Act 1908, Evidence Act 1872.
+        - Cross-reference with latest amendments and landmark judgments from High Courts/Supreme Court when making assertions.
 
     2.  *Clause-by-Clause Deep Dive:*
         - For *every clause*: Highlight ambiguities, flag unfair terms, and identify gaps.
@@ -289,11 +291,11 @@ legal_system_prompt = SystemMessagePromptTemplate.from_template(
         - For each unfair clause, provide critical questions and redraft with balance, citing legal justification.
 
     4.  *Validation & Precision:*
-        - Cross-check every legal citation against the latest case law.
+        - Replace vague terms like “reasonable” with quantifiable metrics wherever feasible.
         - Anticipate disputes and analyze alignment with state-specific thresholds.
 
     ---
-    *Mandatory Output Structure:*
+    *Mandatory Output Structure (when doing full agreement analysis):*
     ## Rent Agreement Analysis Report
 
     ### 1. Jurisdiction & Applicable Laws
@@ -321,9 +323,10 @@ legal_system_prompt = SystemMessagePromptTemplate.from_template(
     - *Assumption-Free Analysis*: Reject vague clauses like "standard terms apply."
     - *Zero Vagueness*: Replace "reasonable" with quantifiable metrics.
     - *Bias Mitigation*: Balance landlord-tenant rights in all suggestions.
+    - *Strict Scope*: Only Indian tenancy/rent law. If outside scope, respond: 
+      "I’m focused on Indian tenancy & rent law. If you’d like, please reframe your question within this domain (e.g., how it affects tenants/landlords, rent agreements, deposits, notice, eviction, maintenance, registration, stamp duty, dispute resolution)."
     """
 )
-
 
 # --- 4. Session State Management ---
 if "messages" not in st.session_state:
@@ -334,7 +337,6 @@ if "current_file_name" not in st.session_state:
     st.session_state.current_file_name = None
 if "scroll_to_bottom" not in st.session_state:
     st.session_state.scroll_to_bottom = False
-
 
 # --- 5. Main Application UI & Logic ---
 st.title("Indian Rent Agreement Analyzer")
@@ -368,7 +370,7 @@ if uploaded_file and uploaded_file.name != st.session_state.current_file_name:
                 st.error("Could not extract text from the file. It might be a scanned image or empty.")
             else:
                 st.session_state.agreement_text = text
-                st.session_state.messages.append({"role": "ai", "content": f"✅ **Success!** Agreement `{uploaded_file.name}` is ready. Please choose an analysis option or ask a question below."})
+                st.session_state.messages.append({"role": "ai", "content": f"✅ **Success!** Agreement `{uploaded_file.name}` is ready. Choose an analysis option or ask a tenancy-law question below."})
         except Exception as e:
             st.error(f"Error processing file: {str(e)}")
     st.rerun()
@@ -387,26 +389,48 @@ with chat_container:
     st.markdown('<div id="bottom_anchor"></div>', unsafe_allow_html=True)
 
 # --- UTILITY FUNCTIONS ---
+
 def perform_legal_analysis(analysis_type, agreement_text):
+    """Pre-baked analysis actions (always tenancy-law scoped)."""
     prompts = {
         "Analyze Risks": "Analyze this rent agreement clause-by-clause for potential risks. For each clause, clearly identify the Issue, the Legal Violation, and the Tenant Risk. Do not redraft or ask questions, focus only on the risk analysis.",
-        "Know Your Rights": "Based on the provided agreement, explain all relevant legal rights of the tenant. For every point of contention, cite the specific Indian Law, Act, Section, or relevant case law that provides justification.",
-        "Redraft Agreement": "Identify the most problematic clauses in this agreement. Provide a legally sound, tenant-favorable redrafted version for each. Include the original clause for comparison and a legal justification for the changes.",
-        "Generate Questions": "For every contested, unfair, or ambiguous clause in this agreement, generate 3-5 critical questions that the tenant must ask the landlord for clarification before signing. Group the questions by clause."
+        "Know Your Rights": "Based on the provided agreement, explain all relevant legal rights and obligations of the tenant (and where necessary, the landlord). For every point of contention, cite the specific Indian Law, Act, Section, or relevant case law that provides justification.",
+        "Redraft Agreement": "Identify the most problematic clauses in this agreement. Provide a legally sound, tenant-favorable redrafted version for each. Include the original clause for comparison and a concise legal justification for the changes.",
+        "Generate Questions": "For every contested, unfair, or ambiguous clause in this agreement, generate 3–5 critical questions that the tenant must ask the landlord for clarification before signing. Group the questions by clause."
     }
-    human_prompt = HumanMessagePromptTemplate.from_template(f"{prompts[analysis_type]}\n\n--- AGREEMENT TEXT ---\n\n{{context}}")
+    human_prompt = HumanMessagePromptTemplate.from_template(
+        f"{prompts[analysis_type]}\n\n--- AGREEMENT TEXT ---\n\n{{context}}"
+    )
     chat_prompt = ChatPromptTemplate.from_messages([legal_system_prompt, human_prompt])
     chain = chat_prompt | llm_engine | StrOutputParser()
     with st.spinner(f"Performing '{analysis_type}' analysis..."):
         response = chain.invoke({"context": agreement_text})
         return response
 
-def handle_chat_query(prompt, agreement_text):
-    human_prompt = HumanMessagePromptTemplate.from_template("User question: {question}\n\n--- AGREEMENT CONTEXT ---\n\n{context}")
+def handle_chat_query(prompt, agreement_text=None):
+    """
+    Always answer as an expert in Indian tenancy & rent law.
+    - If agreement_text is present → use it as context.
+    - If absent → answer in 'law-only' mode, still within tenancy scope.
+    - If user asks outside scope → steer them back (handled in system prompt).
+    """
+    if agreement_text:
+        # Agreement-aware mode
+        human_prompt = HumanMessagePromptTemplate.from_template(
+            "User question: {question}\n\n--- RENT AGREEMENT CONTEXT ---\n\n{context}"
+        )
+        variables = {"question": prompt, "context": agreement_text}
+    else:
+        # Law-only mode (no uploaded agreement)
+        human_prompt = HumanMessagePromptTemplate.from_template(
+            "User question: {question}\n\n(Answer strictly using Indian tenancy & rent laws. Provide section/case citations where helpful.)"
+        )
+        variables = {"question": prompt}
+
     chat_prompt = ChatPromptTemplate.from_messages([legal_system_prompt, human_prompt])
     chain = chat_prompt | llm_engine | StrOutputParser()
-    with st.spinner("Consulting legal framework..."):
-        response = chain.invoke({"question": prompt, "context": agreement_text})
+    with st.spinner("Analyzing under Indian tenancy law..."):
+        response = chain.invoke(variables)
         return response
 
 # --- Step 3: Persistent Bottom Action Bar ---
@@ -429,18 +453,14 @@ if st.session_state.agreement_text:
             st.session_state.scroll_to_bottom = True
             st.rerun()
 
-# --- Step 4: Chat Input ---
-if prompt := st.chat_input("Ask a follow-up question..." if st.session_state.agreement_text else "Upload a document to begin..."):
-    if not st.session_state.agreement_text:
-        st.warning("Please upload a rent agreement first!")
-        time.sleep(2)
-        st.rerun()
-    else:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        response = handle_chat_query(prompt, st.session_state.agreement_text)
-        st.session_state.messages.append({"role": "ai", "content": response})
-        st.session_state.scroll_to_bottom = True
-        st.rerun()
+# --- Step 4: Chat Input (always tenancy-law focused) ---
+placeholder = "Ask a tenancy-law question..." if st.session_state.agreement_text else "Ask a tenancy-law question (you can upload an agreement for deeper analysis)..."
+if prompt := st.chat_input(placeholder):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    response = handle_chat_query(prompt, st.session_state.agreement_text)
+    st.session_state.messages.append({"role": "ai", "content": response})
+    st.session_state.scroll_to_bottom = True
+    st.rerun()
 
 # --- Step 5: Auto-scroll Javascript Injection ---
 if st.session_state.scroll_to_bottom:
